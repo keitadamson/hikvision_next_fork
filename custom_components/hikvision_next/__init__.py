@@ -23,7 +23,9 @@ from .hikvision_device import HikvisionDevice
 from .isapi import ISAPIUnauthorizedError
 from .notifications import EventNotificationsView
 from .services import setup_services
+from .event_stream_handler import long_polling_task
 
+LONG_POLL_TASK = "long_poll_task"
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [
@@ -75,6 +77,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HikvisionConfigEntry) ->
 
     refresh_disabled_entities_in_registry(hass, device)
 
+    # Start the event stream long polling task
+    task = hass.async_create_background_task(
+        long_polling_task(hass),
+        f"{DOMAIN}_long_polling"
+    )
+    hass.data.setdefault(DOMAIN, {})[LONG_POLL_TASK] = task
+
     return True
 
 
@@ -90,6 +99,15 @@ async def async_remove_config_entry_device(hass: HomeAssistant, config_entry, de
 
 async def async_unload_entry(hass: HomeAssistant, entry: HikvisionConfigEntry) -> bool:
     """Unload a config entry."""
+
+    # Cancel the long polling task on unload
+    task = hass.data.get(DOMAIN, {}).pop(LONG_POLL_TASK, None)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     # Unload a config entry
     unload_ok = all(
