@@ -1,39 +1,20 @@
 import asyncio
-import httpx
+import aiohttp
 import xml.etree.ElementTree as ET
 import logging
 from .isapi.models import AlertEvent
-
+from .isapi.utils import deep_get
 
 from .const import (
     EVENTS,
-    EVENTS_ALTERNATE_ID,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-async def long_polling_task(hass):
-    # Check for the configuration of our specific domain
-    if "hikvision_custom" not in config:
-        _LOGGER.error("Hikvision custom component not configured in configuration.yaml.")
-        return False
-
-    component_config = config["hikvision_custom"]
-
-    # 1. We create the httpx.AsyncClient instance here, once per integration.
-    #    The blocking SSL setup happens here, but Home Assistant's setup
-    #    process is designed to handle this.
-    try:
-        client = httpx.AsyncClient()
-    except Exception as e:
-        _LOGGER.error("Failed to create HTTP client: %s", e)
-        return False
-
-    # 2. Instantiate the stream handler and pass the client and config to it.
-    handler = HikvisionStreamHandler(hass, client, component_config)
-
-    # Ensure the handler is ready to start streaming
-    handler.start_stream()
+async def long_polling_task(hass, config):
+    async with aiohttp.ClientSession(auth=aiohttp.BasicAuth(config["username"], config["password"])) as client:
+        handler = HikvisionStreamHandler(hass, client, config)
+        await handler.start_stream()
 
     return True
 
@@ -45,8 +26,7 @@ class HikvisionStreamHandler:
         """Initialize the handler with the Home Assistant core, client, and config."""
         self._hass = hass
         self._client = client
-        self._url = f"http://{config.get('host')}/ISAPI/Event/notification/alertStream"
-        self._auth = httpx.BasicAuth(config.get('username'), config.get('password'))
+        self._url = f"{config["host"]}/ISAPI/Event/notification/alertStream"
         self._running = True
 
     async def start_stream(self):
@@ -59,18 +39,15 @@ class HikvisionStreamHandler:
         buffer = ""
         while self._running:
             try:
-                # Use the pre-initialized client to start the stream.
-                async with self._client.stream(
-                    "GET",
+                async with self._client.get(
                     self._url,
-                    auth=self._auth,
-                    timeout=httpx.Timeout(300.0, connect=60.0),
+                    timeout=aiohttp.ClientTimeout(total=300, connect=60),
                     headers={"Accept": "multipart/x-mixed-replace"},
                 ) as resp:
                     resp.raise_for_status()
-                    _LOGGER.info("Connected to alert stream, status: %s", resp.status_code)
+                    _LOGGER.info("Connected to alert stream, status: %s", resp.status)
 
-                    async for chunk in resp.aiter_bytes():
+                    async for chunk, _ in resp.content.iter_chunks():
                         buffer += chunk.decode("utf-8")
 
                         # Process chunks that contain a full XML event
@@ -92,13 +69,13 @@ class HikvisionStreamHandler:
                                 _LOGGER.warning("Failed to parse event XML chunk: %s", e)
                                 buffer = "" # Clear buffer to avoid getting stuck on bad data
 
-            except httpx.ReadTimeout:
+            except asyncio.TimeoutError:
                 _LOGGER.warning("Event stream connection timed out. Attempting to reconnect...")
-            except httpx.HTTPStatusError as e:
+            except aiohttp.ClientResponseError as e:
                 _LOGGER.error(
                     "Event stream HTTP error: %s - %s. Retrying in 10s...",
-                    e.response.status_code,
-                    e.response.text,
+                    e.status,
+                    e.message,
                 )
                 await asyncio.sleep(10)
             except asyncio.CancelledError:
@@ -127,8 +104,8 @@ class HikvisionStreamHandler:
         event_id = event_id.lower()
 
         # handle alternate event type
-        if EVENTS_ALTERNATE_ID.get(event_id):
-            event_id = EVENTS_ALTERNATE_ID[event_id]
+        if EVENTS.get(event_id):
+            event_id = EVENTS[event_id]
 
         channel_id = int(alert.get("channelID", alert.get("dynChannelID", 0)))
         io_port_id = int(alert.get("portNo", 0))

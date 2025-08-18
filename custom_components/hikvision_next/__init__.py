@@ -79,7 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HikvisionConfigEntry) ->
 
     # Start the event stream long polling task
     task = hass.async_create_background_task(
-        long_polling_task(hass),
+        long_polling_task(hass, entry.data),
         f"{DOMAIN}_long_polling"
     )
     hass.data.setdefault(DOMAIN, {})[LONG_POLL_TASK] = task
