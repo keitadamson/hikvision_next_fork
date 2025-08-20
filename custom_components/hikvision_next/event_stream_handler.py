@@ -1,13 +1,8 @@
 import asyncio
 import aiohttp
-import xml.etree.ElementTree as ET
 import logging
-from .isapi.models import AlertEvent
-from .isapi.utils import deep_get
 
-from .const import (
-    EVENTS,
-)
+from .event_parser import parse_event_notification
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +36,7 @@ class HikvisionStreamHandler:
             try:
                 async with self._client.get(
                     self._url,
-                    timeout=aiohttp.ClientTimeout(total=300, connect=60),
+                    timeout=aiohttp.ClientTimeout(total=600, connect=60),
                     headers={"Accept": "multipart/x-mixed-replace"},
                 ) as resp:
                     resp.raise_for_status()
@@ -62,6 +57,8 @@ class HikvisionStreamHandler:
 
                                     _LOGGER.info("Alert received: %s", event_xml)
 
+                                    parse_event_notification(event_xml)
+
                                     # Clear the processed part of the buffer
                                     buffer = buffer[end_idx + len("</EventNotificationAlert>"):]
 
@@ -70,7 +67,7 @@ class HikvisionStreamHandler:
                                 buffer = "" # Clear buffer to avoid getting stuck on bad data
 
             except asyncio.TimeoutError:
-                _LOGGER.warning("Event stream connection timed out. Attempting to reconnect...")
+                _LOGGER.info("Event stream connection timed out. Attempting to reconnect...")
             except aiohttp.ClientResponseError as e:
                 _LOGGER.error(
                     "Event stream HTTP error: %s - %s. Retrying in 10s...",
@@ -85,53 +82,3 @@ class HikvisionStreamHandler:
             except Exception as e:
                 _LOGGER.error("Event stream an unexpected error: %s. Retrying in 10s...", str(e))
                 await asyncio.sleep(10)
-
-    @staticmethod
-    def parse_event_notification(xml: str) -> AlertEvent:
-        """Parse incoming EventNotificationAlert XML message."""
-
-        # Fix for some cameras sending non html encoded data
-        xml = xml.replace("&", "&amp;")
-
-        data = xmltodict.parse(xml)
-        alert = data["EventNotificationAlert"]
-
-        event_type = alert.get("eventType")
-        event_id = alert.get("eventType")
-        if not event_id or event_id == "duration":
-            # <EventNotificationAlert version="2.0"
-            event_id = alert["DurationList"]["Duration"]["relationEvent"]
-        event_id = event_id.lower()
-
-        # handle alternate event type
-        if EVENTS.get(event_id):
-            event_id = EVENTS[event_id]
-
-        channel_id = int(alert.get("channelID", alert.get("dynChannelID", 0)))
-        io_port_id = int(alert.get("portNo", 0))
-        # <EventNotificationAlert version="1.0"
-        device_serial = deep_get(alert, "Extensions.serialNumber.#text")
-        # <EventNotificationAlert version="2.0"
-        mac = alert.get("macAddress")
-
-        target_type =  alert.get("targetType")
-        detection_picture_trans_type = alert.get("PictureTransType")
-        detection_pictures_number = int(alert.get("detectionPicturesNumber", 0))
-        event_description =  alert.get("eventDescription")
-
-
-        detection_target = deep_get(alert, "DetectionRegionList.DetectionRegionEntry.detectionTarget")
-        region_id = int(deep_get(alert, "DetectionRegionList.DetectionRegionEntry.regionID", 0))
-
-        if not EVENTS[event_id]:
-            raise ValueError(f"Unsupported event {event_id}")
-
-        return AlertEvent(
-            channel_id,
-            io_port_id,
-            event_id,
-            device_serial,
-            mac,
-            region_id,
-            detection_target,
-        )
