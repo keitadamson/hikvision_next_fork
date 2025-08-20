@@ -55,9 +55,8 @@ class HikvisionStreamHandler:
                                 if start_idx != -1 and end_idx != -1:
                                     event_xml = buffer[start_idx : end_idx + len("</EventNotificationAlert>")]
 
-                                    _LOGGER.info("Alert received: %s", event_xml)
-
-                                    parse_event_notification(event_xml)
+                                    event = parse_event_notification(event_xml)
+                                    _LOGGER.debug("Parsed AlertEvent: %s", event)
 
                                     # Clear the processed part of the buffer
                                     buffer = buffer[end_idx + len("</EventNotificationAlert>"):]

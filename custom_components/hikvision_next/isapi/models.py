@@ -139,16 +139,16 @@ class ProtocolsInfo:
 @dataclass
 class AlertEvent:
     """Holds NVR/Camera alert event info."""
-    bkg_url: str = field(default=None)
     channel_id: int
+    event_id: str
+    event_type: str
+    event_state: str
+    port_number: int
+    bkg_url: str = field(default=None)
     device_serial_no: str = field(default=None)
     detection_picture_trans_type: str = field(default=None)
     detection_pictures_number: int = 0
-    event_id: str
-    event_type: str
     event_description: str = field(default=None)
-    event_state: str
-    port_number: int
     mac: str = ""
     region_id: int = 0
     target_type: str = field(default=None)

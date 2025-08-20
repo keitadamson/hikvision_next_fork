@@ -3,20 +3,29 @@ from .isapi.models import AlertEvent
 from .isapi.utils import deep_get
 from .const import EVENTS
 import xml.etree.ElementTree as ET
+import logging
 
-def parse_event_notification(xml: str) -> AlertEvent:
+_LOGGER = logging.getLogger(__name__)
+
+def parse_event_notification(event_xml: str) -> AlertEvent:
     """Parse incoming EventNotificationAlert XML message."""
 
+    _LOGGER.debug("Alert received: %s", event_xml)
+
     try:
-      xml = xml.replace("&", "&amp;")
-      data = xmltodict.parse(xml)
+      event_xml = event_xml.replace("&", "&amp;")
+      data = xmltodict.parse(event_xml)
       alert = data["EventNotificationAlert"]
 
       event_type = alert.get("eventType")
       event_id = alert.get("eventType")
 
+      # Ignore video loss events from channel 0 because this seems to be false positives
+      if event_type == "videoloss" and alert.get("channelID") == "0":
+          return None
+
       if not EVENTS[event_type]:
-          raise ValueError(f"Unsupported event: {event_type}\nXML: {xml}")
+          raise ValueError(f"Unsupported event: {event_type}\nXML: {event_xml}")
 
       if not event_id or event_id == "duration":
           event_id = alert["DurationList"]["Duration"]["relationEvent"]
@@ -37,19 +46,19 @@ def parse_event_notification(xml: str) -> AlertEvent:
 
 
     except (xmltodict.expat.ExpatError, KeyError, ValueError) as e:
-        raise ValueError(f"Failed to parse event XML: {e}\nXML: {xml}")
+        raise ValueError(f"Failed to parse event XML: {e}\nXML: {event_xml}")
 
     return AlertEvent(
-        None,
         channel_id,
+        event_id,
+        event_type,
+        event_state,
+        port_number,
+        None,
         device_serial,
         None,
         None,
-        event_id,
-        event_type,
         event_description,
-        event_state,
-        port_number,
         mac,
         region_id,
         target_type,
